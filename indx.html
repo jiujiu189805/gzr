@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>鬼抓人</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #1a1a1a;
+    color: #ddd;
+    font-family: 'Consolas', 'Courier New', monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px;
+    min-height: 100vh;
+  }
+  h1 { color: #4ade80; margin-bottom: 12px; font-size: 24px; }
+  #info { color: #888; font-size: 13px; margin-bottom: 12px; }
+  canvas {
+    background: #000;
+    border: 2px solid #333;
+    image-rendering: pixelated;
+  }
+  #msg {
+    margin-top: 12px;
+    font-size: 18px;
+    height: 24px;
+    color: #4ade80;
+  }
+  #msg.over { color: #f87171; }
+  #help {
+    margin-top: 12px;
+    color: #888;
+    font-size: 13px;
+    text-align: center;
+    line-height: 1.6;
+  }
+  button {
+    margin-top: 10px;
+    padding: 8px 20px;
+    background: #4ade80;
+    color: #111;
+    border: none;
+    font-family: inherit;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  button:hover { background: #22c55e; }
+</style>
+</head>
+<body>
+  <h1>鬼抓人</h1>
+  <div id="info">WASD 移动 · 走到 E 获胜 · 被 G 抓到失败</div>
+  <canvas id="game"></canvas>
+  <div id="msg"></div>
+  <button onclick="newGame()">重新开始</button>
+  <div id="help">
+    <a href="https://github.com/jiujiu189805/_gzr" style="color:#4ade80">下载 exe 版</a>（22.5KB）
+  </div>
+
+<script>
+// ============ 配置 ============
+const CELL = 16;
+const H = 15;
+const W = 31;
+
+// ============ 全局状态 ============
+let mp = [];
+let px = 1, py = 1;
+let gx = 13, gy = 29;
+let steps = 0;
+let startTime = 0;
+let gameOver = false;
+let win = false;
+let lastGhostMove = 0;
+
+const canvas = document.getElementById('game');
+canvas.width = W * CELL;
+canvas.height = H * CELL;
+const ctx = canvas.getContext('2d');
+
+// ============ 随机迷宫生成（DFS 挖洞） ============
+function genMaze(){
+  mp = [];
+  for(let i = 0; i < H; i++){
+    mp[i] = [];
+    for(let j = 0; j < W; j++){
+      mp[i][j] = '#';
+    }
+  }
+
+  let stack = [[1, 1]];
+  mp[1][1] = '.';
+  const dir = [[-2,0],[2,0],[0,-2],[0,2]];
+
+  while(stack.length > 0){
+    let [x, y] = stack[stack.length - 1];
+
+    let order = [0,1,2,3];
+    for(let i = 0; i < 4; i++){
+      let r = Math.floor(Math.random() * 4);
+      [order[i], order[r]] = [order[r], order[i]];
+    }
+
+    let moved = false;
+    for(let i = 0; i < 4; i++){
+      let d = order[i];
+      let tx = x + dir[d][0];
+      let ty = y + dir[d][1];
+
+      if(tx <= 0 || tx >= H-1 || ty <= 0 || ty >= W-1) continue;
+      if(mp[tx][ty] === '.') continue;
+
+      mp[(x+tx)/2][(y+ty)/2] = '.';
+      mp[tx][ty] = '.';
+      stack.push([tx, ty]);
+      moved = true;
+      break;
+    }
+
+    if(!moved) stack.pop();
+  }
+
+  px = 1; py = 1;
+  mp[px][py] = '.';
+  mp[H-2][W-2] = 'E';
+
+  do {
+    gx = Math.floor(Math.random() * (H-2)) + 1;
+    gy = Math.floor(Math.random() * (W-2)) + 1;
+  } while(mp[gx][gy] === '#' || (gx === px && gy === py));
+}
+
+// ============ 鬼 BFS 寻路 ============
+function ghostMove(){
+  let prex = [], prey = [];
+  for(let i = 0; i < H; i++){
+    prex[i] = []; prey[i] = [];
+    for(let j = 0; j < W; j++){
+      prex[i][j] = -1;
+      prey[i][j] = -1;
+    }
+  }
+
+  let q = [[gx, gy]];
+  let head = 0;
+  prex[gx][gy] = gx;
+  prey[gx][gy] = gy;
+
+  const dx = [-1,1,0,0];
+  const dy = [0,0,-1,1];
+
+  let found = false;
+  while(head < q.length){
+    let [x, y] = q[head++];
+    if(x === px && y === py){ found = true; break; }
+
+    for(let i = 0; i < 4; i++){
+      let tx = x + dx[i];
+      let ty = y + dy[i];
+      if(tx < 0 || tx >= H || ty < 0 || ty >= W) continue;
+      if(mp[tx][ty] === '#') continue;
+      if(prex[tx][ty] !== -1) continue;
+      prex[tx][ty] = x;
+      prey[tx][ty] = y;
+      q.push([tx, ty]);
+    }
+  }
+
+  if(!found) return;
+
+  let cx = px, cy = py;
+  while(prex[cx][cy] !== cx || prey[cx][cy] !== cy){
+    let tx = prex[cx][cy];
+    let ty = prey[cx][cy];
+    if(tx === gx && ty === gy){
+      gx = cx; gy = cy;
+      return;
+    }
+    cx = tx; cy = ty;
+  }
+}
+
+// ============ 绘制 ============
+function draw(){
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  for(let i = 0; i < H; i++){
+    for(let j = 0; j < W; j++){
+      let ch, color;
+
+      if(mp[i][j] === '#'){
+        ch = '#'; color = '#444';
+      } else if(i === px && j === py){
+        ch = 'A'; color = '#4ade80';
+      } else if(i === gx && j === gy){
+        ch = 'G'; color = '#f87171';
+      } else if(mp[i][j] === 'E'){
+        ch = 'E'; color = '#fbbf24';
+      } else {
+        ch = '.'; color = '#222';
+      }
+
+      ctx.fillStyle = color;
+      ctx.font = `${CELL}px Consolas, monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(ch, j * CELL + CELL/2, i * CELL + CELL/2);
+    }
+  }
+}
+
+// ============ 游戏主循环 ============
+function loop(now){
+  if(!gameOver){
+    if(now - lastGhostMove >= 400){
+      lastGhostMove = now;
+      ghostMove();
+
+      if(gx === px && gy === py){
+        gameOver = true;
+        win = false;
+        showEnd();
+      }
+    }
+  }
+
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// ============ 结束 ============
+function showEnd(){
+  const msg = document.getElementById('msg');
+  let elapsed = Math.floor((Date.now() - startTime) / 1000);
+
+  if(win){
+    msg.textContent = `YOU WIN! 用时 ${elapsed} 秒，${steps} 步`;
+    msg.className = '';
+  } else {
+    msg.textContent = `GAME OVER 用时 ${elapsed} 秒，${steps} 步`;
+    msg.className = 'over';
+  }
+}
+
+// ============ 新游戏 ============
+function newGame(){
+  genMaze();
+  steps = 0;
+  gameOver = false;
+  win = false;
+  startTime = Date.now();
+  lastGhostMove = performance.now();
+  document.getElementById('msg').textContent = '';
+  draw();
+}
+
+// ============ 键盘 ============
+document.addEventListener('keydown', (e) => {
+  if(gameOver) return;
+
+  let nx = px, ny = py;
+  const key = e.key.toLowerCase();
+
+  if(key === 'w') if(nx > 0) nx--;
+  if(key === 's') if(nx < H) nx++;
+  if(key === 'a') if(ny > 0) ny--;
+  if(key === 'd') if(ny < W) ny++;
+
+  if(mp[nx][ny] !== '#'){
+    px = nx;
+    py = ny;
+    steps++;
+
+    if(mp[px][py] === 'E'){
+      gameOver = true;
+      win = true;
+      showEnd();
+    }
+  }
+
+  e.preventDefault();
+});
+
+// ============ 启动 ============
+newGame();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
